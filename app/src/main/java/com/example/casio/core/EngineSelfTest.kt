@@ -2493,6 +2493,33 @@ object EngineSelfTest {
             checkTrue("gcd 走引擎", e.process("gcd(12,18)").contains("6"), e.process("gcd(12,18)"))
             checkTrue("cbrt 走引擎", e.process("cbrt(27)").contains("3"), e.process("cbrt(27)"))
         }
+        run {
+            // 键盘上放的是排版符号 × ÷ · −,但解析器只认 ASCII —— 词法层必须归一化,
+            // 否则按下「×」立刻报"不支持的字符"。
+            check("× 可解析(3×4)", calc("3×4"), "12")
+            check("÷ 可解析(12÷4)", calc("12÷4"), "3")
+            check("· 可解析(3·4)", calc("3·4"), "12")
+            check("− 可解析(5−2)", calc("5−2"), "3")
+            check("× 等价于 *", calc("3×4"), calc("3*4"))
+            check("÷ 等价于 /", calc("12÷4"), calc("12/4"))
+            check("2+3×4 = 14(先乘后加)", calc("2+3×4"), "14")
+            check("(2+3)×4 = 20", calc("(2+3)×4"), "20")
+            // 隐式乘号优先级不受影响:6÷2(1+2) = 6÷(2(1+2)) = 1
+            check("6÷2(1+2) = 1", calc("6÷2(1+2)"), "1")
+        }
+        run {
+            // 常用键行里的「%」是**取余运算符**,不是函数 —— 不能补左括号。
+            // (曾经被拼成 "%(",导致「10 % 3」直接语法错误)
+            check("drawerInsertText(%)", com.example.casio.drawerInsertText("%"), "%")
+            check("drawerInsertText(×)", com.example.casio.drawerInsertText("×"), "×")
+            check("drawerInsertText(π)", com.example.casio.drawerInsertText("π"), "π")
+            check("函数仍补左括号(sin)", com.example.casio.drawerInsertText("sin"), "sin(")
+            check("函数仍补左括号(ln)", com.example.casio.drawerInsertText("ln"), "ln(")
+            // 数字键盘侧:√ 补括号,运算符原样
+            check("insertTextFor(√)", Edit.insertTextFor(IoMode.MATH_MATH, "√"), "√(")
+            check("insertTextFor(×)", Edit.insertTextFor(IoMode.MATH_MATH, "×"), "×")
+            check("insertTextFor(%)", Edit.insertTextFor(IoMode.MATH_MATH, "%"), "%")
+        }
     }
 
     // ---------------- 9. 线性方程组 ----------------
