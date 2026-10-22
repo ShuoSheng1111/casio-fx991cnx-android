@@ -154,44 +154,83 @@ object EngineSelfTest {
             checkTrue("sin( 要出现在渲染里", joined2.contains("sin("), "渲染=${joined2}")
         }
         run {
-            // 原子块编辑器:积分块的字段导航与删除语义
+            // 原子块编辑器:积分块的字段布局、**字符级**导航与删除语义
+            // 字段布局:0=下限 1=上限 2=函数
             val ps = mutableListOf<Edit.Part>(Edit.Raw(""))
-            var cur = Edit.Cursor(0, 0, 0)
             ps.add(Edit.newIntegral())
             val bi = ps.size - 1
-            cur = Edit.Cursor(bi, 2, 0)                  // 光标在「函数」字段
-            checkTrue("新建积分块默认 上限=0", (ps[bi] as Edit.Block).fields[0].value == "0", Edit.getText(ps))
-            checkTrue("新建积分块默认 下限=0", (ps[bi] as Edit.Block).fields[1].value == "0", Edit.getText(ps))
-            cur = Edit.insert(ps, cur, "x")              // 函数填 x
-            checkTrue("函数填 x", Edit.getText(ps).contains(":int 0 0 x"), Edit.getText(ps))
-            checkTrue("插入后光标状态", cur.fieldIndex == 2 && cur.offset == 1, "fi=${cur.fieldIndex} off=${cur.offset}")
-            val cur2 = Edit.moveLeft(ps, cur)
-            checkTrue("← 一次到达下限字段", cur2.fieldIndex == 1, "fi=${cur2.fieldIndex} off=${cur2.offset} (进入前 fi=${cur.fieldIndex} off=${cur.offset})")
-            cur = cur2
-            checkTrue("下限光标在末尾", cur.offset == 1, "offset=${cur.offset}")
-            cur = Edit.moveLeft(ps, cur)                 // ← 再进「上限」字段末尾
-            checkTrue("← 两次到达上限字段", cur.fieldIndex == 0, "fieldIndex=${cur.fieldIndex}")
-            cur = Edit.backspace(ps, cur)                // 退格:清掉上限的 0
-            checkTrue("退格只清上限的数字", (ps[bi] as Edit.Block).fields[0].value == "", Edit.getText(ps))
-            checkTrue("退格没有删掉整块", ps.size == 2 && ps[bi] is Edit.Block, Edit.getText(ps))
-            cur = Edit.insert(ps, cur, "1")              // 上限 = 1
-            checkTrue("上限改成 1", Edit.getText(ps).contains(":int 1 0 x"), Edit.getText(ps))
-            // 字段布局:0=上限 1=下限 2=函数
-            // 从函数字段出发一路左移,验证「一次一个字段」的往返
-            cur = Edit.Cursor(bi, 2, 0)
-            val back1 = Edit.moveLeft(ps, cur)           // 函数 → 下限
-            checkTrue("← 到下限", back1.fieldIndex == 1, "fi=${back1.fieldIndex}")
-            val back2 = Edit.moveLeft(ps, back1)         // 下限 → 上限
-            checkTrue("← 到上限", back2.fieldIndex == 0, "fi=${back2.fieldIndex}")
-            val fwd1 = Edit.moveRight(ps, back2)         // 上限 → 下限
-            checkTrue("→ 到下限", fwd1.fieldIndex == 1, "fi=${fwd1.fieldIndex}")
-            val fwd2 = Edit.moveRight(ps, fwd1)          // 下限 → 函数
-            checkTrue("→ 到函数", fwd2.fieldIndex == 2, "fi=${fwd2.fieldIndex}")
-            // 在下限字段里退格,应只清掉下限的数字、且不删整块
-            cur = Edit.Cursor(bi, 1, 1)
-            cur = Edit.backspace(ps, cur)
-            checkTrue("退格清掉下限数字", (ps[bi] as Edit.Block).fields[1].value == "", Edit.getText(ps))
-            checkTrue("只清数字没删整块", ps[bi] is Edit.Block, Edit.getText(ps))
+            val blk = ps[bi] as Edit.Block
+            check("积分块字段数", blk.fields.size.toString(), "3")
+            checkTrue("下限默认 0", blk.fields[0].value == "0", Edit.getText(ps))
+            checkTrue("上限默认 0", blk.fields[1].value == "0", Edit.getText(ps))
+
+            // ★ 字符级左右移动:函数字段写 x^2,方向键要能停在字符之间
+            var c = Edit.Cursor(bi, 2, 0)
+            c = Edit.insert(ps, c, "x^2")
+            checkTrue("函数填 x^2", Edit.getText(ps).contains(":int 0 0 x^2"), Edit.getText(ps))
+            checkTrue("插入后光标在末尾", c.fieldIndex == 2 && c.offset == 3, "fi=${c.fieldIndex} off=${c.offset}")
+
+            val l1 = Edit.moveLeft(ps, c)
+            checkTrue("← 字段内左移一格", l1.fieldIndex == 2 && l1.offset == 2, "fi=${l1.fieldIndex} off=${l1.offset}")
+            val l2 = Edit.moveLeft(ps, l1)
+            checkTrue("← 字段内再左移", l2.fieldIndex == 2 && l2.offset == 1, "fi=${l2.fieldIndex} off=${l2.offset}")
+            val l3 = Edit.moveLeft(ps, l2)
+            checkTrue("← 到字段开头", l3.fieldIndex == 2 && l3.offset == 0, "fi=${l3.fieldIndex} off=${l3.offset}")
+            val l4 = Edit.moveLeft(ps, l3)
+            checkTrue("← 再按才跳到上限末尾", l4.fieldIndex == 1 && l4.offset == 1, "fi=${l4.fieldIndex} off=${l4.offset}")
+            val l5 = Edit.moveLeft(ps, l4)
+            checkTrue("← 上限内左移", l5.fieldIndex == 1 && l5.offset == 0, "fi=${l5.fieldIndex} off=${l5.offset}")
+            val l6 = Edit.moveLeft(ps, l5)
+            checkTrue("← 跳到下限末尾", l6.fieldIndex == 0 && l6.offset == 1, "fi=${l6.fieldIndex} off=${l6.offset}")
+
+            // ★ 右移对称:字段内一格一格走,到末尾才跳字段
+            val r1 = Edit.moveRight(ps, l5)
+            checkTrue("→ 字段内右移一格", r1.fieldIndex == 1 && r1.offset == 1, "fi=${r1.fieldIndex} off=${r1.offset}")
+            val r2 = Edit.moveRight(ps, r1)
+            checkTrue("→ 再按跳到函数开头", r2.fieldIndex == 2 && r2.offset == 0, "fi=${r2.fieldIndex} off=${r2.offset}")
+            val r3 = Edit.moveRight(ps, r2)
+            checkTrue("→ 函数内右移", r3.fieldIndex == 2 && r3.offset == 1, "fi=${r3.fieldIndex} off=${r3.offset}")
+
+            // ★ 关键:在字段中间插入,不能把整段替换掉
+            Edit.insert(ps, Edit.Cursor(bi, 2, 1), "+")     // x|^2 → x+^2
+            checkTrue("字段中间可插入", Edit.getText(ps).contains("x+^2"), Edit.getText(ps))
+
+            // 退格:字段内只删一个字符,不删整块
+            Edit.backspace(ps, Edit.Cursor(bi, 2, 2))       // 删掉刚插入的 +
+            checkTrue("退格只删一个字符", Edit.getText(ps).contains("x^2"), Edit.getText(ps))
+            checkTrue("没删整块", ps[bi] is Edit.Block, Edit.getText(ps))
+
+            // 上限字段退格:只清数字,块保留
+            Edit.backspace(ps, Edit.Cursor(bi, 1, 1))
+            checkTrue("上限被清空", (ps[bi] as Edit.Block).fields[1].value == "", Edit.getText(ps))
+            checkTrue("块仍在", ps[bi] is Edit.Block && ps.size == 2, Edit.getText(ps))
+        }
+        run {
+            // ★ 两条「touched」语义必须同时成立,否则会互相打架:
+            //  ① 新建块里默认值("0"/"x")首次输入应**整体替换** → 得到 5 而不是 05
+            //  ② 用「→」进入**已编辑**字段后,输入应是**插入**而不是整段替换
+            val ps = mutableListOf<Edit.Part>(Edit.newIntegral())
+            val bi = 0
+
+            // ① 默认值整体替换
+            Edit.insert(ps, Edit.Cursor(bi, 0, 1), "5")
+            checkTrue("下限默认 0 被整体替换", (ps[bi] as Edit.Block).fields[0].value == "5", Edit.getText(ps))
+
+            // ② 先把函数写成 ab,再用「→」绕一圈回到该字段,插入不应替换
+            Edit.insert(ps, Edit.Cursor(bi, 2, 0), "ab")
+            var c = Edit.Cursor(bi, 0, 0)
+            // 字段内要一格一格走,所以不硬编码步数:一直按 → 直到进入函数字段
+            var guard = 0
+            while (c.fieldIndex < 2 && guard++ < 20) c = Edit.moveRight(ps, c)
+            // 再退回到函数字段开头(如果越过末尾)
+            while (c.fieldIndex == 2 && c.offset > 0 && guard++ < 40) c = Edit.moveLeft(ps, c)
+            checkTrue("→ 回到函数字段开头", c.fieldIndex == 2 && c.offset == 0, "fi=${c.fieldIndex} off=${c.offset}")
+            Edit.insert(ps, c, "Z")                        // 应插入成 Zab,而不是替换成 Z
+            checkTrue(
+                "→ 进入后仍是插入而非替换",
+                (ps[bi] as Edit.Block).fields[2].value == "Zab",
+                (ps[bi] as Edit.Block).fields[2].value
+            )
         }
         run {
             // 块内字段都空之后,再退格应把整块删掉(用新块单独验证)
@@ -2519,6 +2558,14 @@ object EngineSelfTest {
             check("insertTextFor(√)", Edit.insertTextFor(IoMode.MATH_MATH, "√"), "√(")
             check("insertTextFor(×)", Edit.insertTextFor(IoMode.MATH_MATH, "×"), "×")
             check("insertTextFor(%)", Edit.insertTextFor(IoMode.MATH_MATH, "%"), "%")
+            // 「^」与根号键一致:按下直接带出左括号
+            check("insertTextFor(^)", Edit.insertTextFor(IoMode.MATH_MATH, "^"), "^(")
+            check("insertTextFor(^) 线性模式同样", Edit.insertTextFor(IoMode.LINEAR_LINEAR, "^"), "^(")
+            // 端到端:按「^」得到 "^(",补个右括号就能算
+            check("2^(3) = 8", calc("2^(3)"), "8")
+            check("x^(2) (x=3) = 9", calc("x^(2)", mapOf("x" to 3.0)), "9")
+            // 旧的 ^2 写法不受影响
+            check("2^3 仍为 8", calc("2^3"), "8")
         }
     }
 

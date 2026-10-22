@@ -171,6 +171,8 @@ object Edit {
      */
     fun insertTextFor(mode: IoMode, key: String): String = when (key) {
         "√" -> "√("
+        // 与根号键一致:按「^」直接带出左括号,省得再找括号键
+        "^" -> "^("
         else -> key
     }
 
@@ -376,44 +378,85 @@ object Edit {
     }
 
     /**
-     * 光标左移。字段级语义:**一次「←」就换到上一个字段**。
-     * 上限/下限这类只有一个字符的字段,按一下就换一个,不会"原地不动";
-     * 光标落点用可见标记画出,不必靠"清掉默认值"腾位置。
+     * 光标左移。语义:**字段内按字符移动,到字段开头才跳到上一个字段的末尾**。
+     *
+     * 早先这里是纯字段级跳转(忽略 offset),导致积分/求导块一旦写入内容,
+     * 就无法把光标移到函数或上下限的中间去修改 —— 只能整段重打。
      */
     fun moveLeft(parts: List<Part>, cursor: Cursor): Cursor {
-        if (cursor.fieldIndex > 0) {
-            val p = partAt(parts, cursor) ?: return cursor
-            val f = (p as Block).fields[cursor.fieldIndex - 1]
-            return cursor.copy(fieldIndex = cursor.fieldIndex - 1, offset = f.value.length)
-        }
-        if (cursor.partIndex > 0) {
-            val prev = parts[cursor.partIndex - 1]
-            return when (prev) {
-                is Raw -> Cursor(cursor.partIndex - 1, 0, prev.text.length)
-                is Block -> {
-                    val last = prev.fields.size - 1
-                    Cursor(cursor.partIndex - 1, last, prev.fields[last].value.length)
+        val p = partAt(parts, cursor) ?: return cursor
+        when (p) {
+            is Raw -> {
+                if (cursor.offset > 0) return cursor.copy(offset = cursor.offset - 1)
+                // 已到该项开头 → 跳到前一项
+                if (cursor.partIndex > 0) {
+                    val prev = parts[cursor.partIndex - 1]
+                    return when (prev) {
+                        is Raw -> Cursor(cursor.partIndex - 1, 0, prev.text.length)
+                        is Block -> {
+                            val last = prev.fields.size - 1
+                            Cursor(cursor.partIndex - 1, last, prev.fields[last].value.length)
+                        }
+                    }
                 }
+                return cursor
+            }
+            is Block -> {
+                val f = p.fields.getOrNull(cursor.fieldIndex)
+                val off = cursor.offset.coerceIn(0, f?.value?.length ?: 0)
+                // 字段内左移一个字符
+                if (off > 0) return cursor.copy(offset = off - 1)
+                // 字段开头 → 上一个字段末尾
+                if (cursor.fieldIndex > 0) {
+                    val pf = p.fields[cursor.fieldIndex - 1]
+                    return cursor.copy(fieldIndex = cursor.fieldIndex - 1, offset = pf.value.length)
+                }
+                // 块的第一个字段开头 → 前一项
+                if (cursor.partIndex > 0) {
+                    val prev = parts[cursor.partIndex - 1]
+                    return when (prev) {
+                        is Raw -> Cursor(cursor.partIndex - 1, 0, prev.text.length)
+                        is Block -> {
+                            val last = prev.fields.size - 1
+                            Cursor(cursor.partIndex - 1, last, prev.fields[last].value.length)
+                        }
+                    }
+                }
+                return cursor
             }
         }
-        return cursor
     }
 
-    /** 光标右移:一次「→」同样换到下一个字段的**开头** */
+    /**
+     * 光标右移。语义与 [moveLeft] 对称:**字段内按字符移动,到字段末尾才跳到下一个字段的开头**。
+     */
     fun moveRight(parts: List<Part>, cursor: Cursor): Cursor {
         val p = partAt(parts, cursor) ?: return cursor
-        if (p is Block && cursor.fieldIndex < p.fields.size - 1) {
-            // 重新进入的字段视为"待整体替换",与首次进入行为一致
-            p.fields[cursor.fieldIndex + 1].touched = false
-            return cursor.copy(fieldIndex = cursor.fieldIndex + 1, offset = 0)
+        when (p) {
+            is Raw -> {
+                if (cursor.offset < p.text.length) return cursor.copy(offset = cursor.offset + 1)
+                if (cursor.partIndex < parts.size - 1) return Cursor(cursor.partIndex + 1, 0, 0)
+                return cursor
+            }
+            is Block -> {
+                val f = p.fields.getOrNull(cursor.fieldIndex)
+                val len = f?.value?.length ?: 0
+                val off = cursor.offset.coerceIn(0, len)
+                // 字段内右移一个字符
+                if (off < len) return cursor.copy(offset = off + 1)
+                // 字段末尾 → 下一个字段开头
+                //
+                // 这里**不**重置 touched:BlockField 新建时 touched 就是 false
+                // (默认值如 "0"/"x" 首次输入会整体替换,符合预期);
+                // 而一旦用户编辑过(touched=true),再用「→」进入该字段仍应能"中间插入"。
+                // 曾经在这里重置,导致「→ 进函数字段后一输入就把整段替换掉」。
+                if (cursor.fieldIndex < p.fields.size - 1) {
+                    return cursor.copy(fieldIndex = cursor.fieldIndex + 1, offset = 0)
+                }
+                if (cursor.partIndex < parts.size - 1) return Cursor(cursor.partIndex + 1, 0, 0)
+                return cursor
+            }
         }
-        if (p is Raw && cursor.offset < p.text.length) {
-            return cursor.copy(offset = p.text.length)
-        }
-        if (cursor.partIndex < parts.size - 1) {
-            return Cursor(cursor.partIndex + 1, 0, 0)
-        }
-        return cursor
     }
 
     // ---------------- 生成命令块 ----------------
